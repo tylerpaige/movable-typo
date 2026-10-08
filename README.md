@@ -26,7 +26,7 @@ which marker_single      # note this path for step 3
 
 The first conversion downloads Marker's models (a few gigabytes) into `~/.cache`, so it takes much longer than later ones. No graphics card is needed; on a Mac it runs on the CPU. Accurate mode takes roughly 15–25 seconds a page.
 
-**2. Get the app.** Build it from source (see [Development](#development)); the result is `  /Movable Typo.app`, which you can drag to Applications. The app is not signed by Apple, so the first time you open it macOS will refuse; open **System Settings → Privacy & Security** and choose **Open Anyway**.
+**2. Get the app.** Build it from source with `pnpm package` (see [Development](#development) for what that needs). When it finishes, a disk image opens: drag **Movable Typo** onto **Applications**. The app is not signed by Apple, so the first time you open it macOS will refuse; open **System Settings → Privacy & Security** and choose **Open Anyway**.
 
 **3. Point it at Marker.** Open Settings (`⌘,`) and check the Marker path. It defaults to `~/.local/bin/marker_single`, where pipx puts it; if `which marker_single` printed something else, use that. (An app started from the Finder does not see your shell's `PATH`, which is why the full path is needed.) Set the export folder to where your readings live.
 
@@ -82,7 +82,8 @@ pnpm dev                 # the interface alone in a browser, with a mock backend
 pnpm test                # unit tests
 pnpm test:e2e            # keyboard workflows in WebKit (Tauri's engine on macOS)
 (cd src-tauri && cargo test)
-pnpm tauri build         # Movable Typo.app in src-tauri/target/release/bundle/macos
+pnpm tauri build         # Movable Typo.app and a .dmg in src-tauri/target/release/bundle/
+pnpm package             # the same, then opens the .dmg to drag the app to Applications
 ```
 
 The test fixture, in `test/fixtures/mitchell/`, is W. J. T. Mitchell, "Beyond comparison: Picture, text and method", *Interfaces* 5 (1994), pp. 13–38 ([doi:10.3406/inter.1994.932](https://doi.org/10.3406/inter.1994.932)), as published by Persée under a Creative Commons license, with Marker's accurate-mode output. It is a 27-page scan with 38 notes, a few of them broken across pages.
