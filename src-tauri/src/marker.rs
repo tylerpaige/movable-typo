@@ -46,6 +46,22 @@ async fn pump(app: AppHandle, slug: String, mut src: impl AsyncRead + Unpin) {
     }
 }
 
+/// Apps launched from Finder get a bare PATH, so Marker's helpers (e.g.
+/// Homebrew's llama-server) aren't found. Put the usual install dirs first.
+fn child_path() -> std::ffi::OsString {
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default();
+    let mut dirs = vec![
+        "/opt/homebrew/bin".into(),
+        "/opt/homebrew/sbin".into(),
+        "/usr/local/bin".into(),
+        home.join(".local/bin"),
+    ];
+    if let Some(p) = std::env::var_os("PATH") {
+        dirs.extend(std::env::split_paths(&p));
+    }
+    std::env::join_paths(dirs).unwrap_or_default()
+}
+
 pub async fn run(app: AppHandle, marker_path: &str, mode: &str, project_dir: &Path, slug: &str) -> Result<(), String> {
     if !Path::new(marker_path).exists() {
         return Err(format!("Marker not found at {marker_path}. Set its path in Settings."));
@@ -56,6 +72,7 @@ pub async fn run(app: AppHandle, marker_path: &str, mode: &str, project_dir: &Pa
         .args(["--output_format", "json", "--output_dir"])
         .arg(&out_dir)
         .args(mode_args(mode))
+        .env("PATH", child_path())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
