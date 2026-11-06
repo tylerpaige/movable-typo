@@ -31,10 +31,12 @@ import { decorationsPlugin } from "./editor/decorations";
 import { findAll, findKey, findPlugin, italicizeAllTr, replaceAllTr } from "./editor/findReplace";
 import { footnoteIssues, numbering } from "./editor/footnotes";
 import { importMarker, type Meta } from "./editor/import";
+import { linkTarget, normalizeHref, placeLinks, setLink, withLinks } from "./editor/links";
 import { schema } from "./editor/schema";
 import { images, slugify, toHtml } from "./export/toHtml";
 import { toMarkdown } from "./export/toMarkdown";
 import { displayKey, index, keyName, type Cmd } from "./keymap";
+import { pdfLinks } from "./pdf/links";
 import { PdfViewer } from "./pdf/viewer";
 import { Sync } from "./sync";
 import { alertBox, choose, confirm, el, form, prompt } from "./ui/dialogs";
@@ -359,6 +361,40 @@ export class Workspace {
     this.view.dispatch(state.tr.setSelection(TextSelection.near($pos)).scrollIntoView());
   }
 
+  private async editLink() {
+    const target = linkTarget(this.view.state);
+    if (!target || target.from === target.to) return this.notify("Select the text to link first");
+    const answer = await prompt("Link to", target.href ?? "", target.href ? "Leave blank to remove the link." : "A web address, or an email address.");
+    this.view.focus();
+    if (answer === null) return;
+    const href = normalizeHref(answer);
+    if (!href && !target.href) return;
+    this.run(setLink(href));
+    this.notify(href ? `Linked to ${href}` : "Link removed");
+  }
+
+  /** Puts the PDF's links on text that does not have them yet (for readings imported before links were read). */
+  private async linksFromPdf() {
+    const pdf = this.pdf.pdfDoc;
+    if (!pdf) return this.notify("The PDF is still loading");
+    const res = placeLinks(this.view.state, await pdfLinks(pdf, this.project.pages));
+    if (res.added) this.view.dispatch(res.tr);
+    const total = res.added + res.already + res.missing.length;
+    if (!total) return this.notify("The PDF has no web links");
+    const summary = `${res.added} added, ${res.already} already there`;
+    if (!res.missing.length) return this.notify(`PDF links: ${summary}`);
+    const list = el(
+      "ul",
+      {},
+      ...res.missing.map((l) => el("li", {}, `Page ${l.page + 1}: `, l.text ? `“${clip(l.text)}” → ` : "(no text, probably an image) → ", l.href)),
+    );
+    await alertBox(
+      `PDF links: ${summary}, ${res.missing.length} not found`,
+      el("div", {}, el("p", {}, `These links' text is not in the reading (a running head, an image, or text read differently). Add any you want with ${displayKey("Mod-Shift-l")}.`), list),
+    );
+    this.view.focus();
+  }
+
   private imageName(ext: string, page?: number) {
     const tag = Math.random().toString(36).slice(2, 6);
     return page === undefined ? `figure_${tag}.${ext}` : `_page_${page}_Figure_${tag}.${ext}`;
@@ -440,8 +476,9 @@ export class Workspace {
     await this.host.api.backupProject(this.slug);
     const imp = importMarker(JSON.parse(await this.host.api.readMarkerJson(this.slug)));
     const marker = await this.host.api.markerRun(this.slug);
-    this.project = { ...this.project, pages: imp.pages, doc: imp.doc.toJSON(), marker };
-    this.view.updateState(this.createState(imp.doc));
+    const doc = this.pdf.pdfDoc ? withLinks(imp.doc, await pdfLinks(this.pdf.pdfDoc, imp.pages).catch(() => [])) : imp.doc;
+    this.project = { ...this.project, pages: imp.pages, doc: doc.toJSON(), marker };
+    this.view.updateState(this.createState(doc));
     this.saveState = "pending";
     await this.save();
     this.renderStatus();
@@ -535,6 +572,8 @@ export class Workspace {
 
       { id: "italic", label: "Italic", group: fmt, keys: ["Mod-i"], block: ["Mod-i"], run: r(toggleMark(schema.marks.em)) },
       { id: "bold", label: "Bold", group: fmt, keys: ["Mod-b"], block: ["Mod-b"], run: r(toggleMark(schema.marks.strong)) },
+      { id: "link", label: "Add, edit or remove a link", group: fmt, keys: ["Mod-Shift-l"], block: ["l"], run: () => this.editLink() },
+      { id: "pdf-links", label: "Add the PDF's links to the text", group: fmt, run: () => this.linksFromPdf() },
       { id: "undo", label: "Undo", group: fmt, keys: ["Mod-z"], block: ["u", "Mod-z"], run: r(undo) },
       { id: "redo", label: "Redo", group: fmt, keys: ["Mod-Shift-z"], block: ["Mod-Shift-z"], run: r(redo) },
 

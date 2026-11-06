@@ -155,6 +155,21 @@ test("details, export and the result", async ({ page }) => {
   await page.keyboard.press("Escape");
 });
 
+test("the PDF's links are on the title and byline; ⌘⇧L edits a link", async ({ page }) => {
+  await open(page);
+  await expect(page.locator('.ProseMirror h2 a[href="https://www.persee.fr/doc/inter_1164-6225_1994_num_5_1_932"]')).toHaveText(
+    "Beyond comparison: Picture, text and method",
+  );
+  await expect(page.locator('.ProseMirror a[href="https://www.persee.fr/authority/835991"]')).toHaveText("W. J. Thomas Mitchell");
+  await page.locator(".ProseMirror a", { hasText: "W. J. Thomas Mitchell" }).click();
+  await page.keyboard.press("Meta+Shift+l");
+  const input = page.locator("dialog[open] input");
+  await expect(input).toHaveValue("https://www.persee.fr/authority/835991");
+  await input.fill("example.org/mitchell");
+  await page.keyboard.press("Enter");
+  await expect(page.locator('.ProseMirror a[href="https://example.org/mitchell"]')).toHaveText("W. J. Thomas Mitchell");
+});
+
 test("help and the command palette", async ({ page }) => {
   await open(page);
   await page.keyboard.press("Meta+/");

@@ -1,7 +1,11 @@
 import "./style.css";
 import { api as apiPromise, MARKER_MODES, type Api, type MarkerMode, type ProjectSummary } from "./api";
+import type { Node as PMNode } from "prosemirror-model";
 import { importMarker } from "./editor/import";
+import { withLinks } from "./editor/links";
 import { displayKey, keyName } from "./keymap";
+import { pdfLinks } from "./pdf/links";
+import { openPdf } from "./pdf/viewer";
 import { alertBox, el, form } from "./ui/dialogs";
 import { Workspace, type ProjectFile, type WorkspaceHost } from "./workspace";
 
@@ -167,11 +171,28 @@ async function importProject(api: Api, slug: string, meta?: ProjectFile["meta"])
     version: 1,
     meta: meta ?? imp.meta,
     pages: imp.pages,
-    doc: imp.doc.toJSON(),
+    doc: (await withPdfLinks(api, slug, imp.doc, imp.pages)).toJSON(),
     marker: await api.markerRun(slug),
   };
   await api.saveProject(slug, JSON.stringify(project));
   return project;
+}
+
+/**
+ * Puts the PDF's own links on the imported text. Marker keeps only some of
+ * them (and none in accurate mode), so they are read from the PDF directly.
+ * A PDF whose links cannot be read still imports, without them.
+ */
+async function withPdfLinks(api: Api, slug: string, doc: PMNode, pages: [number, number][]) {
+  try {
+    const pdf = await openPdf(await api.readPdf(slug));
+    const links = await pdfLinks(pdf, pages);
+    await pdf.loadingTask.destroy();
+    return withLinks(doc, links);
+  } catch (e) {
+    console.warn("could not read the PDF's links", e);
+    return doc;
+  }
 }
 
 /**

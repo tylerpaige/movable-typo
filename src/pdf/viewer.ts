@@ -6,6 +6,18 @@ pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
 const GAP = 12;
 
+/** Opens a PDF with the decoders, fonts and cmaps pdf.js loads at runtime. */
+export function openPdf(data: Uint8Array) {
+  const base = new URL("pdfjs/", document.baseURI).href;
+  return pdfjs.getDocument({
+    data,
+    wasmUrl: base + "wasm/",
+    cMapUrl: base + "cmaps/",
+    standardFontDataUrl: base + "standard_fonts/",
+    iccUrl: base + "iccs/",
+  }).promise;
+}
+
 interface Page {
   div: HTMLDivElement;
   canvas: HTMLCanvasElement;
@@ -29,6 +41,8 @@ export class PdfViewer {
   private markerSizes: [number, number][] = [];
   private observer: IntersectionObserver;
   private marks: HTMLElement[] = [];
+  /** The open PDF, once loaded. */
+  pdfDoc: pdfjs.PDFDocumentProxy | null = null;
   zoom = 1;
   /** True while dragging out a capture, and just after, so the drag's click is not a sync click. */
   private capturing = false;
@@ -58,14 +72,8 @@ export class PdfViewer {
   }
 
   async load(data: Uint8Array, markerSizes: [number, number][]) {
-    const base = new URL("pdfjs/", document.baseURI).href;
-    const doc = await pdfjs.getDocument({
-      data,
-      wasmUrl: base + "wasm/",
-      cMapUrl: base + "cmaps/",
-      standardFontDataUrl: base + "standard_fonts/",
-      iccUrl: base + "iccs/",
-    }).promise;
+    const doc = await openPdf(data);
+    this.pdfDoc = doc;
     this.markerSizes = markerSizes;
     this.inner.replaceChildren();
     this.pages = [];

@@ -47,6 +47,7 @@ The first conversion downloads Marker's models (a few gigabytes) into `~/.cache`
 | Exclude from export / delete                         | `⌘⇧X`                   | `x` / `d`       |
 | Heading / subheading / paragraph / quote             | `⌘⌥2` `⌘⌥3` `⌘⌥0` `⌘⌥Q` | `2` `3` `p` `q` |
 | Italic / bold                                        | `⌘I` `⌘B`               |                 |
+| Add, edit or remove a link                           | `⌘⇧L`                   | `l`             |
 | Insert image from a file / captured from the PDF     | `⌘⌥I` / `⌘⌥C`           | `m` / `M`       |
 | Find and replace                                     | `⌘F`                    | `/`             |
 | Apply / preview a suggested fix                      | `⌘⇧A` / `⌘⇧R`           |                 |
@@ -59,6 +60,8 @@ The first conversion downloads Marker's models (a few gigabytes) into `~/.cache`
 **Fix once, fix everywhere.** Correct a word (`tbe` → `the`) or italicize a title, and a bar asks "Apply that fix to N other places?". `⌘⇧R` previews every case before and after; `Space` skips one, `Enter` applies the rest.
 
 **Converting again.** "Run Marker again" (in `⌘K`) asks which mode to use for that one run, warns that the text will be replaced, and keeps the reading details. The previous version is saved as `project.backup.json` in the reading's folder. Each run's mode is recorded in `marker/run.json` and shown in the status bar and the list of readings. Settings only choose the mode for new readings.
+
+**Links.** Web links in the PDF are put on the same words in the text when a reading is imported. Marker keeps only some of them. A link whose words aren't in the text (a logo, a running head) is skipped. For readings imported before this, "Add the PDF's links to the text" (in `⌘K`) adds them and lists any it could not place. `⌘⇧L` links the selected text, or edits or removes the link under the cursor.
 
 **Images.** If Marker missed a figure, `⌘⌥C` lets you drag a box around it in the PDF; it is captured at about 216 dpi. `⌘⌥I` adds one from a file. On an existing figure, both replace its image and keep the caption.
 
