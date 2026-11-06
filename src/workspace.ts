@@ -13,10 +13,14 @@ import {
   joinWithNext,
   makeFootnote,
   moveUnit,
-  noteByNumber,
+  noteToBody,
+  numberTarget,
   placeRef,
   purgeExcluded,
   refAtCursor,
+  refMarker,
+  relabelRef,
+  renumberNote,
   setBlockKind,
   splitAtReturnPos,
   splitUnit,
@@ -25,11 +29,13 @@ import {
   jumpRefNote,
   allIssues,
   insertImage,
+  type FootnoteResult,
+  type NoteChoice,
 } from "./editor/commands";
 import { CorrectionWatcher, type Suggestion } from "./editor/correction";
 import { decorationsPlugin } from "./editor/decorations";
 import { findAll, findKey, findPlugin, italicizeAllTr, replaceAllTr } from "./editor/findReplace";
-import { footnoteIssues, numbering } from "./editor/footnotes";
+import { footnoteIssues, numbering, refContext, refs } from "./editor/footnotes";
 import { importMarker, type Meta } from "./editor/import";
 import { linkTarget, normalizeHref, placeLinks, setLink, withLinks } from "./editor/links";
 import { schema } from "./editor/schema";
@@ -39,7 +45,7 @@ import { displayKey, index, keyName, type Cmd } from "./keymap";
 import { pdfLinks } from "./pdf/links";
 import { PdfViewer } from "./pdf/viewer";
 import { Sync } from "./sync";
-import { alertBox, choose, confirm, el, form, prompt } from "./ui/dialogs";
+import { alertBox, choose, confirm, el, form, prompt, type Choice } from "./ui/dialogs";
 import { FindPanel } from "./ui/findPanel";
 import { pickImageFile } from "./ui/imageFile";
 import { clip, PreviewPanel } from "./ui/previewPanel";
@@ -310,27 +316,89 @@ export class Workspace {
 
   // ------------------------------------------------------------ actions
 
+  /** What to do with new note text that has no ref to go with: `null` if dismissed. */
+  private async askNoteChoice(ask: NonNullable<FootnoteResult["ask"]>, label: string | null) {
+    const { doc } = this.view.state;
+    const items: Choice<NoteChoice>[] = [
+      ...(ask.continues ? [{ label: `Add to the end of footnote ${ask.continues.n}`, value: { kind: "append", id: ask.continues.id } as NoteChoice }] : []),
+      ...ask.refs.map((ref) => ({ label: `Ref ${ref.node.attrs.label || "?"}: …${refContext(doc, ref.pos)}`, value: { kind: "ref", ref } as NoteChoice })),
+      { label: "New footnote with no ref", value: { kind: "new" } as NoteChoice },
+    ];
+    return choose(label ? `Footnote ${label}: no ref has that number` : "Which ref is this footnote for?", items);
+  }
+
   private async makeFootnote() {
-    const res = makeFootnote(this.view.state, (tr) => this.view.dispatch(tr));
+    if (this.toBody()) return;
+    const dispatch = (tr: Transaction) => this.view.dispatch(tr);
+    let res = makeFootnote(this.view.state, dispatch);
+    let choice: NoteChoice | null = null;
+    if (res?.ask) {
+      choice = await this.askNoteChoice(res.ask, res.label);
+      this.view.focus();
+      if (!choice) return;
+      res = makeFootnote(this.view.state, dispatch, choice);
+    }
     if (!res) return this.notify("Put the cursor in a body paragraph to make it a footnote");
-    if (res.continued) this.notify(`Added to the end of footnote ${res.continued} (it continued from the previous page)`);
+    if (res.run) {
+      const { made, linked, stoppedAt } = res.run;
+      const unlinked = made - linked;
+      const refs = unlinked ? `${linked} linked to their refs, ${unlinked} with no ref` : "all linked to their refs";
+      const stopped = stoppedAt === null ? "" : ` Stopped before note ${stoppedAt - 1}: it runs into note ${stoppedAt}, whose number wasn't found. Correct it in the text, then press ${displayKey("Mod-Shift-f")} again.`;
+      this.notify(`Made ${made} ${made === 1 ? "footnote" : "footnotes"}, ${refs}.${stopped}`);
+    } else if (res.continued) this.notify(`Added to the end of footnote ${res.continued} (it continued from the previous page)`);
     else if (res.linked) this.notify(`Footnote ${res.label ?? ""} linked to its ref`);
+    else if (choice) this.notify(`Footnote created with no ref. To link it, put the cursor where it belongs and press ${displayKey("Mod-Shift-n")}.`);
     else this.notify(`Footnote created, but no matching ref was found. Put the cursor where it belongs and press ${displayKey("Mod-Shift-n")}.`);
     this.view.focus();
   }
 
   private async placeRef() {
-    const existing = refAtCursor(this.view.state);
-    const label = existing ? "Link this ref to footnote number" : "Insert a ref to footnote number";
-    const answer = await prompt(label, "", "Leave blank to create a new, empty footnote.");
+    const { state } = this.view;
+    // Refs live in the body text only.
+    if (!placeRef(null)(state)) return this.notify("Refs go in the body text, not in the notes");
+    const marker = refMarker(state);
+    const existing = marker ? null : refAtCursor(state);
+    const title = marker ? `Make “${marker}” a ref to` : existing ? "Link this ref to" : "Insert a ref to";
+    const { num, order, notes } = numbering(state.doc);
+    const linked = new Set(refs(state.doc).map((r) => r.node.attrs.target));
+    const item = (id: string) => ({
+      label: `${num.get(id)}. ${clip(notes.get(id)!.node.textContent, 70)}`,
+      detail: linked.has(id) ? undefined : "no ref",
+      value: id,
+    });
+    const items = [
+      { label: "A new, empty footnote", value: "" },
+      ...order.filter((id) => !linked.has(id)).map(item),
+      ...order.filter((id) => linked.has(id)).map(item),
+    ];
+    const open = existing && !notes.has(existing.node.attrs.target) ? existing.node.attrs.label : "";
+    const target = await choose(title, items, "Type a number or words from the footnote", marker ?? open);
     this.view.focus();
-    if (answer === null) return;
-    let target: string | null = null;
-    if (answer.trim()) {
-      target = noteByNumber(this.view.state.doc, Number(answer.trim()));
-      if (!target) return this.notify(`There is no footnote ${answer.trim()}`);
+    if (target !== null) this.run(placeRef(target || null));
+  }
+
+  private toBody() {
+    if (!this.run(noteToBody)) return false;
+    this.notify(`Footnote moved to the body text; any ref to it is unlinked (undo with ${displayKey("Mod-z")})`);
+    return true;
+  }
+
+  private async changeNumber() {
+    const { state } = this.view;
+    const target = numberTarget(state);
+    if (!target) return this.notify("Put the cursor on a ref or in a footnote");
+    if ("ref" in target) {
+      const answer = await prompt("Number for this ref", target.ref.node.attrs.label, "This ref has no footnote yet, so this only corrects the number that was read.");
+      this.view.focus();
+      if (answer?.trim()) this.run(relabelRef(target.ref, answer.trim()));
+      return;
     }
-    if (!this.run(placeRef(target))) this.notify("Refs go in the body text, not in the notes");
+    const answer = await prompt("Footnote number", String(target.n), "Numbers follow the order of the refs in the text, so this footnote swaps places with the one that has this number.");
+    this.view.focus();
+    if (!answer?.trim() || Number(answer) === target.n) return;
+    const total = numbering(state.doc).order.length;
+    if (!this.run(renumberNote(target.id, Number(answer)))) return this.notify(`There is no footnote ${answer.trim()}: numbers run from 1 to ${total}`);
+    this.notify(`Footnotes ${target.n} and ${answer.trim()} swapped (undo with ${displayKey("Mod-z")})`);
   }
 
   private async footnoteCheck() {
@@ -564,7 +632,7 @@ export class Workspace {
       { id: "image-file", label: "Insert image from a file (or replace this one)", group: blocks, keys: ["Mod-Alt-i"], block: ["m"], run: () => this.imageFromFile() },
       { id: "image-pdf", label: "Insert image captured from the PDF (drag a box)", group: blocks, keys: ["Mod-Alt-c"], block: ["Shift-m"], run: () => this.imageFromPdf() },
       { id: "purge", label: "Delete all excluded blocks", group: blocks, run: () => this.run(purgeExcluded) || this.notify("No excluded blocks") },
-      { id: "para", label: "Paragraph", group: blocks, keys: ["Mod-Alt-0"], block: ["p"], run: r(setBlockKind("p")) },
+      { id: "para", label: "Paragraph", group: blocks, keys: ["Mod-Alt-0"], block: ["p"], run: () => this.run(setBlockKind("p")) || this.toBody() },
       { id: "h2", label: "Heading", group: blocks, keys: ["Mod-Alt-2"], block: ["2"], run: r(setBlockKind("h2")) },
       { id: "h3", label: "Subheading", group: blocks, keys: ["Mod-Alt-3"], block: ["3"], run: r(setBlockKind("h3")) },
       { id: "h4", label: "Minor heading", group: blocks, keys: ["Mod-Alt-4"], block: ["4"], run: r(setBlockKind("h4")) },
@@ -577,8 +645,10 @@ export class Workspace {
       { id: "undo", label: "Undo", group: fmt, keys: ["Mod-z"], block: ["u", "Mod-z"], run: r(undo) },
       { id: "redo", label: "Redo", group: fmt, keys: ["Mod-Shift-z"], block: ["Mod-Shift-z"], run: r(redo) },
 
-      { id: "footnote", label: "Make this block (or selection) a footnote", group: notes, keys: ["Mod-Shift-f"], block: ["f"], run: () => this.makeFootnote() },
-      { id: "ref", label: "Insert or relink a footnote ref", group: notes, keys: ["Mod-Shift-n"], run: () => this.placeRef() },
+      { id: "footnote", label: "Make this block (or selection) a footnote; in a footnote, back to body text", group: notes, keys: ["Mod-Shift-f"], block: ["f"], run: () => this.makeFootnote() },
+      { id: "ref", label: "Insert or relink a ref, or make selected text a ref", group: notes, keys: ["Mod-Shift-n"], run: () => this.placeRef() },
+      { id: "note-body", label: "Turn this footnote back into body text", group: notes, run: () => this.toBody() || this.notify("Put the cursor in a footnote") },
+      { id: "note-number", label: "Change the number of this footnote or ref", group: notes, run: () => this.changeNumber() },
       { id: "jump", label: "Jump between ref and footnote", group: notes, keys: ["Mod-Shift-j"], block: ["t"], run: () => this.run(jumpRefNote) || this.notify("No linked ref here") },
       { id: "check", label: "Check footnotes", group: notes, keys: ["Mod-Shift-k"], run: () => this.footnoteCheck() },
 

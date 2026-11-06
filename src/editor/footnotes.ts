@@ -44,6 +44,36 @@ export function refs(doc: PMNode): RefInfo[] {
   return out;
 }
 
+/**
+ * Where each note starts in a block that holds a run of numbered notes, like
+ * "6. Ibid. 7. Cf. Mumford, p. 361. 8. …". Each number must follow the last,
+ * which keeps years and page numbers from being taken for notes.
+ */
+export function noteStarts(text: string): number[] {
+  const first = /^\s*(\d{1,3})[.)]\s/.exec(text);
+  if (!first) return [];
+  const starts = [0];
+  for (let n = Number(first[1]) + 1; ; n++) {
+    const next = new RegExp(`(?<=\\s)(?<!\\b(?:pp?|nos?|vol)\\.\\s)${n}[.)]\\s`, "gi");
+    next.lastIndex = starts[starts.length - 1] + 1;
+    const m = next.exec(text);
+    if (!m) return starts;
+    starts.push(m.index);
+  }
+}
+
+/** The words just before a ref, to tell refs apart in a list. */
+export function refContext(doc: PMNode, pos: number) {
+  const $pos = doc.resolve(pos);
+  return $pos.parent.textBetween(Math.max($pos.parentOffset - 50, 0), $pos.parentOffset, undefined, " ").trim();
+}
+
+/** The refs still waiting for a note. */
+export function openRefs(doc: PMNode) {
+  const { notes } = numbering(doc);
+  return refs(doc).filter((r) => !r.node.attrs.target || !notes.has(r.node.attrs.target));
+}
+
 export interface Issue {
   pos: number;
   message: string;

@@ -79,6 +79,8 @@ test("a note's continuation on the next page joins its note with one key", async
   await findAndSelect(page, "Heath, 86), the process");
   await page.keyboard.press("Escape");
   await page.keyboard.press("f");
+  await expect(page.locator("dialog[open] .selected")).toHaveText("Add to the end of footnote 15");
+  await page.keyboard.press("Enter");
   await expect(status(page)).toContainText("Added to the end of footnote 15");
   const note15 = await page.locator(".footnote").nth(14).innerText();
   expect(note15).toContain("quoted in Heath, 86), the process");
@@ -102,6 +104,72 @@ test("make a footnote from a paragraph, then add its ref", async ({ page }) => {
   await page.keyboard.type("39");
   await page.keyboard.press("Enter");
   await expect(status(page)).toContainText("39 notes ·");
+  await expect(status(page)).not.toContainText("to check");
+});
+
+test("any text can be linked to a waiting ref, or be a note with no ref", async ({ page }) => {
+  await open(page);
+  // Unlink a ref by turning note 9 back into text, then make that text a note again.
+  await findAndSelect(page, "I will employ the typographic convention");
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("p");
+  await expect(status(page)).toContainText("Footnote moved to the body text");
+  await expect(status(page)).toContainText("37 notes, 1 to check");
+  await expect.poll(() => blockText(page)).toMatch(/^I will employ the typographic convention/);
+  await page.keyboard.press("f");
+  await expect(page.locator("dialog[open] .choices")).toContainText("the problem of the image-text.");
+  await expect(page.locator("dialog[open] .choices")).toContainText("New footnote with no ref");
+  await page.keyboard.type("Ref 9");
+  await page.keyboard.press("Enter");
+  await expect(status(page)).toContainText("38 notes ·");
+  await expect(status(page)).not.toContainText("to check");
+  await expect(page.locator(".footnote").nth(8)).toContainText("I will employ the typographic convention");
+});
+
+test("⌘⇧F turns a footnote back into body text, and text into a footnote again", async ({ page }) => {
+  await open(page);
+  await findAndSelect(page, "I will employ the typographic convention");
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("Meta+Shift+f");
+  await expect(status(page)).toContainText("Footnote moved to the body text");
+  await expect(status(page)).toContainText("37 notes, 1 to check");
+  await expect.poll(() => blockText(page)).toMatch(/^I will employ the typographic convention/);
+  await expect(page.locator(".footnotes")).not.toContainText("I will employ the typographic convention");
+  await page.keyboard.press("Meta+Shift+f");
+  await page.keyboard.type("Ref 9");
+  await page.keyboard.press("Enter");
+  await expect(status(page)).toContainText("38 notes ·");
+  await expect(page.locator(".footnote").nth(8)).toContainText("I will employ the typographic convention");
+});
+
+test("selected text becomes a ref; a note's number can be changed", async ({ page }) => {
+  await open(page);
+  await findAndSelect(page, "Fichier pdf généré le 14/03/2023");
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("A note typed by hand.");
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("f");
+  await expect(status(page)).toContainText("no matching ref was found");
+  await findAndSelect(page, "Fichier pdf généré le 14/03/2023");
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.type(" see 39");
+  await page.keyboard.press("Shift+ArrowLeft");
+  await page.keyboard.press("Shift+ArrowLeft");
+  await page.keyboard.press("Meta+Shift+n");
+  await expect(page.locator("dialog[open] .selected")).toContainText("39. A note typed by hand.");
+  await page.keyboard.press("Enter");
+  await expect(status(page)).toContainText("39 notes ·");
+  await expect(status(page)).not.toContainText("to check");
+  // Its ref is the first in the text, so it is now note 1. It trades places with note 2.
+  await page.keyboard.press("Meta+Shift+j");
+  await page.keyboard.press("Meta+k");
+  await page.keyboard.type("Change the number");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("2");
+  await page.keyboard.press("Enter");
+  await expect(status(page)).toContainText("Footnotes 1 and 2 swapped");
+  await expect(page.locator(".footnote").nth(1)).toHaveText("A note typed by hand.");
   await expect(status(page)).not.toContainText("to check");
 });
 

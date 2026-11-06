@@ -40,8 +40,8 @@ The first conversion downloads Marker's models (a few gigabytes) into `~/.cache`
 | Next / previous block                                | `⌥↓` `⌥↑`               | `j` `k`         |
 | Next flagged block (page-break split, unlinked ref…) | `⌘]`                    | `n`             |
 | Join with next block                                 | `⌘J`                    | `J`             |
-| Make footnote (block or selection)                   | `⌘⇧F`                   | `f`             |
-| Insert / relink a footnote ref                       | `⌘⇧N`                   |                 |
+| Make footnote (block or selection), or undo one      | `⌘⇧F`                   | `f`             |
+| Insert / relink a ref, or make selected text a ref   | `⌘⇧N`                   |                 |
 | Jump between ref and note                            | `⌘⇧J`                   | `t`             |
 | Check footnotes                                      | `⌘⇧K`                   |                 |
 | Exclude from export / delete                         | `⌘⇧X`                   | `x` / `d`       |
@@ -53,7 +53,15 @@ The first conversion downloads Marker's models (a few gigabytes) into `~/.cache`
 | Apply / preview a suggested fix                      | `⌘⇧A` / `⌘⇧R`           |                 |
 | Sync on/off, re-center                               | `⌘L`, `⌘⇧P`             |                 |
 
-**Footnotes.** Notes found by Marker are collected at the end and linked to their refs automatically. Numbers come from the order of the refs, so they never go stale. `f` on unnumbered note text (a note that ran over the page break) adds it to the end of the last note on the previous page.
+**Footnotes.** Notes found by Marker are collected at the end and linked to their refs automatically.
+
+A red ref like `6?` is waiting for its note. Numbers come from the order of the refs, so the number on a note can change as you fix others.
+
+- **Text → footnote.** Select any text, or put the cursor in a block, and press `⌘⇧F`. If it starts with the number of a waiting ref, it links to that ref. Otherwise you choose: one of the waiting refs, the end of the previous page's note, or a new note with no ref.
+- **A block of notes → footnotes.** A block that holds a run of numbered notes (`6. … 7. … 8. …`, as an endnotes page often imports) becomes one note each, linked by number. If a misread number stops the run, the rest stays in the body: correct the number and press `⌘⇧F` again. To make one note from part of a block, select it first.
+- **Text → ref.** Select a number or mark in the text (up to five characters) and press `⌘⇧N` to replace it with a ref, then choose its note. Notes with no ref are listed first. With nothing selected, `⌘⇧N` inserts a ref at the cursor, or relinks the one there.
+- **Footnote → text.** `⌘⇧F` with the cursor in a footnote (also `f` or `p` in block mode, or `⌘⌥0`) puts the note back where it was on the page. Its ref stays, unlinked.
+- **Changing a number.** "Change the number of this footnote or ref" (in `⌘K`), with the cursor in a note or on its ref, swaps it with the note that has that number, refs included. On an unlinked ref it corrects the number that was read. If every number after a point is off by one, there's an extra or a missing ref: delete it or add it with `⌘⇧N`, and the numbers follow.
 
 **Block quotes.** Indented paragraphs are marked as quotes on import (with a short attribution line right after one). `q` toggles a quote; consecutive quoted paragraphs export as one `<blockquote>`.
 

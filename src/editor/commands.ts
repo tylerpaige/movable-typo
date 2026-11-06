@@ -12,7 +12,7 @@ import {
   type Transaction,
 } from "prosemirror-state";
 import { schema, units, footnotesPos, newId, type Region, type Unit } from "./schema";
-import { numbering, refs, footnoteIssues } from "./footnotes";
+import { noteStarts, numbering, openRefs, refs, footnoteIssues, type RefInfo } from "./footnotes";
 import { probableSplits } from "./splitDetect";
 import { leadingLabel } from "./import";
 
@@ -311,6 +311,16 @@ function stripLabel(content: Fragment): { content: Fragment; label: string | nul
   return { content, label: null };
 }
 
+/** Puts the notes in number order, which changing a ref's link can upset. */
+function sortNotes(tr: Transaction) {
+  const { order, notes } = numbering(tr.doc);
+  const container = tr.doc.lastChild!;
+  const sorted = order.map((id) => notes.get(id)!.node);
+  if (sorted.every((n, i) => n === container.child(i))) return;
+  const from = footnotesPos(tr.doc) + 1;
+  tr.replaceWith(from, from + container.content.size, sorted);
+}
+
 /** Where a new note goes so the notes stay in reference order. */
 function noteInsertPos(doc: PMNode, refPos: number | null) {
   const container = footnotesPos(doc);
@@ -331,25 +341,31 @@ function noteInsertPos(doc: PMNode, refPos: number | null) {
 
 /** The unlinked ref a new note most likely belongs to: same label, nearest before `pos`. */
 function findRefFor(doc: PMNode, pos: number, label: string | null) {
-  const { notes } = numbering(doc);
-  const open = refs(doc).filter((r) => !r.node.attrs.target || !notes.has(r.node.attrs.target));
+  const open = openRefs(doc);
   const before = open.filter((r) => r.pos < pos);
   const pick = (list: typeof open) =>
     (label ? list.filter((r) => r.node.attrs.label === label) : list).at(-1) ?? null;
   return pick(before) ?? (label ? pick(open) : null);
 }
 
+/** What to do with new note text whose ref can't be found by its number. */
+export type NoteChoice = { kind: "ref"; ref: RefInfo } | { kind: "append"; id: string } | { kind: "new" };
+
 export interface FootnoteResult {
   linked: boolean;
   label: string | null;
+  /** Nothing was done: the caller should offer these and call again with a choice. */
+  ask?: { continues: { id: string; n: number } | null; refs: RefInfo[] };
   /** Set when unnumbered text was added to the end of an existing note (its number). */
   continued?: number;
+  /** Set when one block was split into several notes. */
+  run?: { made: number; linked: number; stoppedAt: number | null };
 }
 
 /**
- * Where unnumbered note text belongs: the note printed last on an earlier page
- * (a note that runs over the page break), or failing that, the note of the last
- * ref before `pos`.
+ * The note that unnumbered text may continue: the one printed last on the page
+ * before (a note that runs over the page break). Text with no page to go on
+ * falls back to the note of the last ref before `pos`.
  */
 function noteBefore(doc: PMNode, pos: number, page: number | null) {
   const { notes, num } = numbering(doc);
@@ -357,10 +373,10 @@ function noteBefore(doc: PMNode, pos: number, page: number | null) {
     let best: { id: string; page: number; y: number } | null = null;
     for (const [id, { node }] of notes) {
       const r = (node.lastChild!.attrs.src as Region[]).at(-1);
-      if (!r || r.page >= page) continue;
+      if (!r || r.page !== page - 1) continue;
       if (!best || r.page > best.page || (r.page === best.page && r.bbox[3] > best.y)) best = { id, page: r.page, y: r.bbox[3] };
     }
-    if (best) return { ...notes.get(best.id)!, n: num.get(best.id)! };
+    return best && { ...notes.get(best.id)!, n: num.get(best.id)! };
   }
   const r = refs(doc).filter((x) => x.pos < pos && notes.has(x.node.attrs.target)).at(-1);
   if (!r) return null;
@@ -368,11 +384,60 @@ function noteBefore(doc: PMNode, pos: number, page: number | null) {
   return { ...notes.get(id)!, n: num.get(id)! };
 }
 
+/** Once a note has left the body: keeps the doc valid and moves on to the next block. */
+function afterRemoval(tr: Transaction, from: number, block: boolean) {
+  if (tr.doc.firstChild!.type === schema.nodes.footnotes) tr.insert(0, schema.nodes.paragraph.create());
+  const mapped = tr.mapping.map(from, -1);
+  const next = units(tr.doc).find((u) => u.pos + u.node.nodeSize > mapped);
+  if (next) placeIn(tr, next, block);
+}
+
+/**
+ * Splits a block holding a run of numbered notes (endnotes that Marker read as
+ * one list) into separate notes, each linked to its ref. If the numbers stop
+ * while a ref still waits for the next one, the number was probably misread:
+ * the note it ran into stays in the body, to correct and run again.
+ */
+function makeNotes(state: EditorState, unit: Unit, text: string, dispatch?: (tr: Transaction) => void): FootnoteResult {
+  const { node, pos } = unit;
+  const starts = noteStarts(text);
+  const label = leadingLabel(text)!.label;
+  const stoppedAt = Number(label) + starts.length;
+  const rest = openRefs(state.doc).some((r) => r.node.attrs.label === String(stoppedAt)) ? starts.pop()! : null;
+  const size = node.content.size;
+  const notes = starts.map((from, i) => {
+    let to = starts[i + 1] ?? rest ?? size;
+    while (to > from && /\s/.test(text[to - 1])) to--;
+    const stripped = stripLabel(node.content.cut(from, to));
+    const src = splitRegions(splitRegions(node.attrs.src ?? [], size, from)[1], size - from, to - from)[0];
+    return { ...stripped, src, ref: findRefFor(state.doc, pos, stripped.label) };
+  });
+  const run = { made: notes.length, linked: notes.filter((n) => n.ref).length, stoppedAt: rest === null ? null : stoppedAt };
+  const result = { linked: run.linked === run.made, label, run };
+  if (!dispatch) return result;
+
+  const tr = state.tr;
+  for (const n of notes) {
+    const id = newId();
+    if (n.ref) tr.setNodeMarkup(n.ref.pos, undefined, { ...n.ref.node.attrs, target: id });
+    tr.insert(noteInsertPos(tr.doc, n.ref?.pos ?? null), schema.nodes.footnote.create({ id }, schema.nodes.paragraph.create({ src: n.src }, n.content)));
+  }
+  if (rest === null) tr.delete(pos, pos + node.nodeSize);
+  else tr.delete(pos + 1, pos + 1 + rest);
+  sortNotes(tr);
+  afterRemoval(tr, pos, inBlockMode(state));
+  dispatch(tr.scrollIntoView());
+  return result;
+}
+
 /**
  * Moves the current block (or the selected text) into the notes at the end,
- * strips its leading number and links it to the matching ref.
+ * strips its leading number and links it to the matching ref. A block with a
+ * run of numbered notes becomes one note each; a selection is always one note.
+ * Without a matching ref nothing is guessed: the result's `ask` lists the
+ * options, unless there are none and it can only be a new note.
  */
-export function makeFootnote(state: EditorState, dispatch?: (tr: Transaction) => void): FootnoteResult | null {
+export function makeFootnote(state: EditorState, dispatch?: (tr: Transaction) => void, choice?: NoteChoice): FootnoteResult | null {
   const sel = state.selection;
   const cur = currentUnit(state);
   if (!cur || cur.unit.footnote || !cur.unit.node.isTextblock) return null;
@@ -387,14 +452,27 @@ export function makeFootnote(state: EditorState, dispatch?: (tr: Transaction) =>
     const size = unit.node.content.size;
     src = splitRegions(splitRegions(src, size, sel.from - unit.pos - 1)[1], size - (sel.from - unit.pos - 1), sel.to - sel.from)[0];
   } else {
+    const text = textOf(unit.node);
+    if (!choice && noteStarts(text).length > 1) return makeNotes(state, unit, text, dispatch);
     content = unit.node.content;
     range = [unit.pos, unit.pos + unit.node.nodeSize];
   }
   const stripped = stripLabel(content);
 
-  // Unnumbered note text is almost always the end of the previous page's note.
-  const prev = stripped.label ? null : noteBefore(state.doc, range[0], src[0]?.page ?? null);
-  if (prev) {
+  const matched = stripped.label ? findRefFor(state.doc, range[0], stripped.label) : null;
+  if (!choice && !matched) {
+    // Unnumbered note text is often the end of the previous page's note.
+    const before = stripped.label ? null : noteBefore(state.doc, range[0], src[0]?.page ?? null);
+    const open = openRefs(state.doc);
+    if (before || open.length) {
+      const continues = before && { id: before.node.attrs.id as string, n: before.n };
+      return { linked: false, label: stripped.label, ask: { continues, refs: open } };
+    }
+  }
+
+  if (choice?.kind === "append") {
+    const { notes, num } = numbering(state.doc);
+    const prev = { ...notes.get(choice.id)!, n: num.get(choice.id)! };
     if (!dispatch) return { linked: true, label: null, continued: prev.n };
     const para = prev.node.lastChild!;
     const paraPos = prev.pos + prev.node.nodeSize - 1 - para.nodeSize;
@@ -403,16 +481,14 @@ export function makeFootnote(state: EditorState, dispatch?: (tr: Transaction) =>
     const sep = para.content.size && !/\s$/.test(para.textContent) ? Fragment.from(schema.text(" ")) : Fragment.empty;
     tr.insert(end, sep.append(stripped.content));
     tr.delete(range[0], range[1]);
-    if (tr.doc.firstChild!.type === schema.nodes.footnotes) tr.insert(0, schema.nodes.paragraph.create());
-    const mapped = tr.mapping.map(range[0], -1);
-    const next = units(tr.doc).find((u) => u.pos + u.node.nodeSize > mapped);
-    if (next) placeIn(tr, next, inBlockMode(state));
+    afterRemoval(tr, range[0], inBlockMode(state));
     dispatch(tr.scrollIntoView());
     return { linked: true, label: null, continued: prev.n };
   }
 
-  const ref = findRefFor(state.doc, range[0], stripped.label);
-  if (!dispatch) return { linked: !!ref, label: stripped.label };
+  const ref = choice?.kind === "ref" ? choice.ref : choice ? null : matched;
+  const label = stripped.label ?? (ref?.node.attrs.label as string | undefined) ?? null;
+  if (!dispatch) return { linked: !!ref, label };
 
   const id = newId();
   const note = schema.nodes.footnote.create({ id }, schema.nodes.paragraph.create({ src }, stripped.content));
@@ -423,6 +499,7 @@ export function makeFootnote(state: EditorState, dispatch?: (tr: Transaction) =>
   const at = noteInsertPos(tr.doc, ref?.pos ?? null);
   tr.insert(at, note);
   tr.delete(range[0], range[1]);
+  sortNotes(tr);
   if (tr.doc.firstChild!.type === schema.nodes.footnotes) tr.insert(0, schema.nodes.paragraph.create());
   const after = units(tr.doc);
   const mapped = tr.mapping.map(range[0], -1);
@@ -434,8 +511,41 @@ export function makeFootnote(state: EditorState, dispatch?: (tr: Transaction) =>
   }
   else if (next) placeIn(tr, next, inBlockMode(state));
   dispatch(tr.scrollIntoView());
-  return { linked: !!ref, label: stripped.label };
+  return { linked: !!ref, label };
 }
+
+/** Where a note's text goes in the body: its place on the PDF page, or else just after its ref. */
+function bodyPosFor(doc: PMNode, note: PMNode, refPos: number | undefined) {
+  const r = (note.firstChild!.attrs.src as Region[])[0];
+  if (r) {
+    const after = units(doc).find((u) => {
+      const s = (u.node.attrs.src as Region[] | undefined)?.[0];
+      return !u.footnote && s && (s.page > r.page || (s.page === r.page && s.bbox[1] > r.bbox[1]));
+    });
+    return after?.pos ?? footnotesPos(doc);
+  }
+  return refPos === undefined ? footnotesPos(doc) : doc.resolve(refPos).after(1);
+}
+
+/** Moves a note back into the body text. Its refs stay, unlinked, showing the number they had. */
+export const noteToBody: Command = (state, dispatch) => {
+  const note = currentUnit(state)?.unit.footnote;
+  if (!note) return false;
+  if (!dispatch) return true;
+  const id = note.node.attrs.id;
+  const n = numbering(state.doc).num.get(id);
+  const own = refs(state.doc).filter((r) => r.node.attrs.target === id);
+  const tr = state.tr;
+  for (const r of own) tr.setNodeMarkup(r.pos, undefined, { ...r.node.attrs, target: null, label: r.node.attrs.label || String(n) });
+  const at = bodyPosFor(state.doc, note.node, own[0]?.pos);
+  // The note comes after everything in the body, so `at` stays valid.
+  tr.delete(note.pos, note.pos + note.node.nodeSize);
+  tr.insert(at, note.node.content);
+  const moved = units(tr.doc).find((u) => u.pos === at);
+  if (moved) placeIn(tr, moved, inBlockMode(state));
+  dispatch(tr.scrollIntoView());
+  return true;
+};
 
 /** The ref right next to the cursor (or selected), if any. */
 export function refAtCursor(state: EditorState): { pos: number; node: PMNode } | null {
@@ -447,15 +557,18 @@ export function refAtCursor(state: EditorState): { pos: number; node: PMNode } |
   return null;
 }
 
-/** Footnote id for a displayed number. */
-export function noteByNumber(doc: PMNode, n: number) {
-  const { order } = numbering(doc);
-  return order[n - 1] ?? null;
+/** The text a ref would replace: a selection short enough to be a misread note mark. */
+export function refMarker(state: EditorState) {
+  const { selection: sel, doc } = state;
+  if (!(sel instanceof TextSelection) || sel.empty || !sel.$from.sameParent(sel.$to)) return null;
+  const text = doc.textBetween(sel.from, sel.to).trim();
+  return /^\S{1,5}$/.test(text) ? text : null;
 }
 
 /**
- * With a ref at the cursor, relinks it to `target`. Otherwise inserts a new ref.
- * `target` null makes a new empty note and puts the cursor in it.
+ * Makes selected text like "6" a ref to `target`. Otherwise relinks the ref at
+ * the cursor, or inserts a new one. `target` null makes a new empty note and
+ * puts the cursor in it.
  */
 export function placeRef(target: string | null): Command {
   return (state, dispatch) => {
@@ -464,9 +577,13 @@ export function placeRef(target: string | null): Command {
     if (!dispatch) return true;
     const tr = state.tr;
     let id = target;
-    const existing = refAtCursor(state);
+    const marker = refMarker(state);
+    const existing = marker ? null : refAtCursor(state);
     let refPos: number;
-    if (existing) {
+    if (marker) {
+      refPos = state.selection.from;
+      tr.replaceWith(refPos, state.selection.to, schema.nodes.footnote_ref.create({ target: null, label: marker }));
+    } else if (existing) {
       refPos = existing.pos;
     } else {
       refPos = state.selection.to;
@@ -477,11 +594,57 @@ export function placeRef(target: string | null): Command {
       const at = noteInsertPos(tr.doc, refPos);
       tr.insert(at, schema.nodes.footnote.create({ id }, schema.nodes.paragraph.create()));
       tr.setNodeMarkup(refPos, undefined, { ...tr.doc.nodeAt(refPos)!.attrs, target: id });
-      tr.setSelection(TextSelection.create(tr.doc, at + 2));
+      sortNotes(tr);
+      tr.setSelection(TextSelection.create(tr.doc, numbering(tr.doc).notes.get(id)!.pos + 2));
     } else {
       tr.setNodeMarkup(refPos, undefined, { ...tr.doc.nodeAt(refPos)!.attrs, target: id });
+      sortNotes(tr);
       if (!existing) tr.setSelection(TextSelection.create(tr.doc, refPos + 1));
     }
+    dispatch(tr.scrollIntoView());
+    return true;
+  };
+}
+
+/** The note at the cursor (in it, or on its ref), or the unlinked ref there. */
+export function numberTarget(state: EditorState): { id: string; n: number } | { ref: RefInfo } | null {
+  const { num } = numbering(state.doc);
+  const ref = refAtCursor(state);
+  const id = ref ? ref.node.attrs.target : currentUnit(state)?.unit.footnote?.node.attrs.id;
+  if (num.has(id)) return { id, n: num.get(id)! };
+  return ref && { ref };
+}
+
+/** Corrects the number read for a ref that has no note yet. */
+export function relabelRef(ref: RefInfo, label: string): Command {
+  return (state, dispatch) => {
+    if (dispatch) dispatch(state.tr.setNodeMarkup(ref.pos, undefined, { ...ref.node.attrs, label }));
+    return true;
+  };
+}
+
+/**
+ * Gives a note the number `n`. Numbers come from the order of the refs, so it
+ * trades places with the note that has that number, refs included.
+ */
+export function renumberNote(id: string, n: number): Command {
+  return (state, dispatch) => {
+    const { order, notes } = numbering(state.doc);
+    const other = order[n - 1];
+    if (!other || other === id) return false;
+    if (!dispatch) return true;
+    const tr = state.tr;
+    const swapped = new Map([[id, other], [other, id]]);
+    for (const r of refs(state.doc)) {
+      const target = swapped.get(r.node.attrs.target);
+      if (target) tr.setNodeMarkup(r.pos, undefined, { ...r.node.attrs, target });
+    }
+    const [a, b] = [notes.get(id)!, notes.get(other)!].sort((x, y) => x.pos - y.pos);
+    tr.replaceWith(b.pos, b.pos + b.node.nodeSize, a.node);
+    tr.replaceWith(a.pos, a.pos + a.node.nodeSize, b.node);
+    sortNotes(tr);
+    const moved = units(tr.doc).find((u) => u.footnote?.node.attrs.id === id);
+    if (moved) placeIn(tr, moved, inBlockMode(state));
     dispatch(tr.scrollIntoView());
     return true;
   };

@@ -115,15 +115,16 @@ export interface Choice<T> {
 }
 
 /** A filterable list: type to narrow, ↑/↓ to move, Enter to choose. Used by the palette. */
-export function choose<T>(title: string, items: Choice<T>[], placeholder = "Type to filter"): Promise<T | null> {
+export function choose<T>(title: string, items: Choice<T>[], placeholder = "Type to filter", filter = ""): Promise<T | null> {
   return open<T | null>((dlg, done) => {
-    const input = el("input", { type: "text", placeholder });
+    const input = el("input", { type: "text", placeholder, value: filter });
     const list = el("ul", { className: "choices" });
     let shown: Choice<T>[] = [];
     let sel = 0;
     const render = () => {
       const q = input.value.toLowerCase().split(/\s+/).filter(Boolean);
-      shown = items.filter((it) => q.every((w) => (it.label + " " + (it.detail ?? "")).toLowerCase().includes(w)));
+      const leads = (it: Choice<T>) => (q[0] && it.label.toLowerCase().startsWith(q[0]) ? 0 : 1);
+      shown = items.filter((it) => q.every((w) => (it.label + " " + (it.detail ?? "")).toLowerCase().includes(w))).sort((a, b) => leads(a) - leads(b));
       sel = Math.min(sel, Math.max(shown.length - 1, 0));
       list.replaceChildren(
         ...shown.map((it, i) => {
@@ -152,6 +153,6 @@ export function choose<T>(title: string, items: Choice<T>[], placeholder = "Type
     dlg.append(el("h2", {}, title), input, list);
     dlg.className = "palette";
     render();
-    queueMicrotask(() => input.focus());
+    queueMicrotask(() => input.select());
   }, null);
 }
