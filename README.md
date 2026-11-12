@@ -8,6 +8,7 @@ Turns a PDF reading into clean, plain HTML and Markdown, with the PDF beside the
 2. **Correct** it next to the PDF. Wherever the cursor is, the PDF shows the same line, outlined.
 3. **Reading details** (`⌘E`): title, author, year, source, URL.
 4. **Export** (`⌘⇧E`): writes `<export folder>/<slug>/<slug>.html`, `.md` and `images/`.
+5. **Upload to Typo School** (`⌘⇧U`): sends the reading to the library at [economy.typo.school](https://economy.typo.school) under the same slug: its images, its text and details, and its PDF. A new reading arrives unpublished; publish it in Economy. Uploading again replaces the text, the PDF and whichever details are filled in here.
 
 Readings in progress are kept in `~/Documents/Movable Typo/<slug>/` and saved automatically. Folders, the Marker path and the Marker mode are set in Settings (`⌘,`).
 
@@ -29,6 +30,8 @@ The first conversion downloads Marker's models (a few gigabytes) into `~/.cache`
 **2. Get the app.** Build it from source with `pnpm package` (see [Development](#development) for what that needs). When it finishes, a disk image opens: drag **Movable Typo** onto **Applications**. The app is not signed by Apple, so the first time you open it macOS will refuse; open **System Settings → Privacy & Security** and choose **Open Anyway**.
 
 **3. Point it at Marker.** Open Settings (`⌘,`) and check the Marker path. It defaults to `~/.local/bin/marker_single`, where pipx puts it; if `which marker_single` printed something else, use that. (An app started from the Finder does not see your shell's `PATH`, which is why the full path is needed.) Set the export folder to where your readings live.
+
+**4. To upload, add the API key.** In Settings, enter Typo School's API key (`READINGS_API_KEY` on Economy). It is kept in the app's `settings.json`.
 
 ## Keyboard
 

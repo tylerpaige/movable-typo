@@ -76,6 +76,8 @@ export interface Field {
   value: string;
   options?: { value: string; label: string }[];
   hint?: string;
+  /** An input type other than text, such as "password". */
+  type?: string;
 }
 
 /** A form of labelled text fields (or selects). Enter saves, Esc cancels. */
@@ -91,7 +93,7 @@ export function form(
         for (const o of f.options) s.append(el("option", { value: o.value, textContent: o.label, selected: o.value === f.value }));
         return s;
       }
-      return el("input", { type: "text", name: f.name, value: f.value });
+      return el("input", { type: f.type ?? "text", name: f.name, value: f.value });
     });
     const rows = fields.map((f, i) => el("label", {}, f.label, inputs[i], f.hint ? el("span", { className: "hint" }, f.hint) : ""));
     const save = el("button", { type: "submit", textContent: opts.submit ?? "Save" });

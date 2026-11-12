@@ -58,7 +58,7 @@ export async function selftest(api: Api, dir: string, pdf: string) {
     const meta = { ...imp.meta, author: "Self Test" };
     log(`     conflicts before: ${JSON.stringify(await api.exportConflicts("export_check"))}`);
     const where = await step("write export", () =>
-      api.writeExport({ slug: "export_check", html: toHtml(imp.doc, meta), markdown: toMarkdown(imp.doc, meta), images: [{ name: "x.png", data: "aGk=" }] }),
+      api.writeExport({ slug: "export_check", html: toHtml(imp.doc, meta), markdown: toMarkdown(imp.doc, meta), images: [{ name: "x.png", data: "aGk=", mime: "image/png" }] }),
     );
     log(`     exported to ${where}`);
     log(`     conflicts after: ${JSON.stringify(await api.exportConflicts("export_check"))}`);

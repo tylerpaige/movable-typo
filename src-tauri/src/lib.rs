@@ -1,3 +1,4 @@
+mod economy;
 mod files;
 mod marker;
 
@@ -100,6 +101,23 @@ fn write_export(app: tauri::AppHandle, export: Export) -> Result<String, String>
     files::write_export(&PathBuf::from(settings(&app)?.export_dir), &export)
 }
 
+#[tauri::command]
+async fn upload_image(app: tauri::AppHandle, slug: String, name: String, mime: String, data: String) -> Result<String, String> {
+    economy::Economy::new(&settings(&app)?)?.upload_image(&slug, &name, &mime, &data).await
+}
+
+#[tauri::command]
+async fn upload_reading(app: tauri::AppHandle, slug: String, reading: serde_json::Value) -> Result<economy::Saved, String> {
+    economy::Economy::new(&settings(&app)?)?.save_reading(&slug, reading).await
+}
+
+/// Sends the project's source.pdf as the PDF of the reading `slug`.
+#[tauri::command]
+async fn upload_pdf(app: tauri::AppHandle, project: String, slug: String) -> Result<(), String> {
+    let pdf = files::read_project_file(&projects_dir(&app)?, &project, "source.pdf")?;
+    economy::Economy::new(&settings(&app)?)?.upload_pdf(&slug, pdf).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -118,6 +136,9 @@ pub fn run() {
             save_project,
             export_conflicts,
             write_export,
+            upload_image,
+            upload_reading,
+            upload_pdf,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Movable Typo");

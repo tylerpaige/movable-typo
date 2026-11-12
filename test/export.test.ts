@@ -85,7 +85,7 @@ describe("HTML", () => {
     const fig = schema.nodes.figure.create({ image: "aGk=", mime: "image/png", name: "_page_2_Picture_0.png" }, schema.text("Fig. 1"));
     const d = doc([fig]);
     expect(toHtml(d, meta)).toContain('<figure>\n\t\t\t<img src="images/_page_2_Picture_0.png" alt="" />\n\t\t\t<figcaption>Fig. 1</figcaption>\n\t\t</figure>');
-    expect(images(d)).toEqual([{ name: "_page_2_Picture_0.png", data: "aGk=" }]);
+    expect(images(d)).toEqual([{ name: "_page_2_Picture_0.png", data: "aGk=", mime: "image/png" }]);
   });
 });
 

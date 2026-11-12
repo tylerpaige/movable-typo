@@ -13,6 +13,17 @@ pub struct Settings {
     pub marker_mode: String,
     pub projects_dir: String,
     pub export_dir: String,
+    /// Typo School's Economy, where readings are uploaded. Missing from
+    /// settings saved before uploading existed, hence the defaults.
+    #[serde(default = "default_economy_url")]
+    pub economy_url: String,
+    /// Economy's READINGS_API_KEY. Empty until it's entered in Settings.
+    #[serde(default)]
+    pub economy_api_key: String,
+}
+
+fn default_economy_url() -> String {
+    "https://economy.typo.school".into()
 }
 
 impl Settings {
@@ -29,6 +40,8 @@ impl Settings {
             marker_mode: "accurate".into(),
             projects_dir: projects.to_string_lossy().into(),
             export_dir: home.join("projects/readings").to_string_lossy().into(),
+            economy_url: default_economy_url(),
+            economy_api_key: String::new(),
         }
     }
 }
@@ -315,6 +328,15 @@ mod tests {
         new.export_dir = "/new".into();
         save_settings(&new_file, &new).unwrap();
         assert_eq!(load_settings(&new_file, Some(&old_file), home).export_dir, "/new");
+    }
+
+    #[test]
+    fn settings_from_before_uploading_keep_their_values() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("settings.json");
+        fs::write(&file, r#"{"marker_path":"/m","marker_mode":"fast","projects_dir":"/p","export_dir":"/e"}"#).unwrap();
+        let s = load_settings(&file, None, tmp.path());
+        assert_eq!((s.export_dir.as_str(), s.economy_url.as_str(), s.economy_api_key.as_str()), ("/e", "https://economy.typo.school", ""));
     }
 
     #[test]

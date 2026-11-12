@@ -109,6 +109,8 @@ async function editSettings(api: Api) {
     },
     { name: "projects_dir", label: "Where readings in progress are kept", value: s.projects_dir },
     { name: "export_dir", label: "Export folder", value: s.export_dir, hint: "Each reading is written to <folder>/<slug>/<slug>.html and .md" },
+    { name: "economy_url", label: "Typo School (Economy) URL", value: s.economy_url, hint: "Where “Upload to Typo School” sends readings" },
+    { name: "economy_api_key", label: "Typo School API key", value: s.economy_api_key, type: "password", hint: "READINGS_API_KEY on Economy" },
   ]);
   if (res) await api.setSettings(res as unknown as typeof s);
   workspace?.view.focus();

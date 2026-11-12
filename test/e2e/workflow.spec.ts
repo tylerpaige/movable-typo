@@ -223,6 +223,31 @@ test("details, export and the result", async ({ page }) => {
   await page.keyboard.press("Escape");
 });
 
+test("uploading to Typo School asks for the key, then sends the text and PDF", async ({ page }) => {
+  await open(page);
+  await page.keyboard.press("Meta+e");
+  await page.locator('dialog[open] input[name="title"]').fill("Beyond Comparison");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Meta+Shift+u");
+  await expect(page.locator("dialog[open]")).toContainText("Uploading needs an API key");
+  await page.keyboard.press("Enter");
+  await page.locator('dialog[open] input[name="economy_api_key"]').fill("secret");
+  await page.keyboard.press("Enter");
+
+  await page.keyboard.press("Meta+Shift+u");
+  await expect(page.locator("dialog[open]")).toContainText("as beyond_comparison?");
+  await page.keyboard.press("Enter");
+  await expect(status(page)).toContainText("Uploaded beyond_comparison to Typo School, unpublished");
+  const uploads = await page.evaluate(() => (window as any).__uploads as { kind: string; slug: string; body: any }[]);
+  expect(uploads.map((u) => u.kind)).toEqual(["reading", "pdf"]);
+  expect(uploads[0].body.bodyHtml).toMatch(/^<article>[\s\S]*<\/article>$/);
+  expect(uploads[1]).toMatchObject({ slug: "beyond_comparison", body: { project: "fixture" } });
+
+  await page.keyboard.press("Meta+Shift+u");
+  await page.keyboard.press("Enter");
+  await expect(status(page)).toContainText("Updated beyond_comparison on Typo School (unpublished)");
+});
+
 test("the PDF's links are on the title and byline; ⌘⇧L edits a link", async ({ page }) => {
   await open(page);
   await expect(page.locator('.ProseMirror h2 a[href="https://www.persee.fr/doc/inter_1164-6225_1994_num_5_1_932"]')).toHaveText(

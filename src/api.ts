@@ -6,6 +6,8 @@ export interface Settings {
   marker_mode: "accurate" | "balanced" | "fast";
   projects_dir: string;
   export_dir: string;
+  economy_url: string;
+  economy_api_key: string;
 }
 
 export type MarkerMode = Settings["marker_mode"];
@@ -36,7 +38,21 @@ export interface ExportPayload {
   slug: string;
   html: string;
   markdown: string;
-  images: { name: string; data: string }[];
+  images: { name: string; data: string; mime: string }[];
+}
+
+/** Typo School's copy of a reading, as Api::ReadingsController returns it (camelCase). */
+export interface RemoteReading {
+  id: number;
+  slug: string;
+  title: string;
+  active: boolean;
+}
+
+export interface UploadedReading {
+  /** True when this upload made the reading, which then starts unpublished. */
+  created: boolean;
+  reading: RemoteReading;
 }
 
 export interface Api {
@@ -56,6 +72,12 @@ export interface Api {
   saveProject(slug: string, json: string): Promise<void>;
   exportConflicts(slug: string): Promise<string[]>;
   writeExport(e: ExportPayload): Promise<string>;
+  /** Stores an image (base64) for the reading `slug` on Typo School and returns its URL. */
+  uploadImage(slug: string, name: string, mime: string, data: string): Promise<string>;
+  /** Updates Typo School's reading `slug`, or creates it if there's none. */
+  uploadReading(slug: string, reading: Record<string, unknown>): Promise<UploadedReading>;
+  /** Sends `project`'s source PDF as the PDF of Typo School's reading `slug`. */
+  uploadPdf(project: string, slug: string): Promise<void>;
 }
 
 async function tauriApi(): Promise<Api> {
@@ -92,6 +114,9 @@ async function tauriApi(): Promise<Api> {
     saveProject: (slug, json) => invoke("save_project", { slug, json }),
     exportConflicts: (slug) => invoke("export_conflicts", { slug }),
     writeExport: (exp) => invoke("write_export", { export: exp }),
+    uploadImage: (slug, name, mime, data) => invoke("upload_image", { slug, name, mime, data }),
+    uploadReading: (slug, reading) => invoke("upload_reading", { slug, reading }),
+    uploadPdf: (project, slug) => invoke("upload_pdf", { project, slug }),
   };
 }
 
@@ -109,12 +134,17 @@ function mockApi(): Api {
     marker_mode: "accurate",
     projects_dir: "/mock/projects",
     export_dir: "/mock/readings",
+    economy_url: "https://economy.typo.school",
+    economy_api_key: "",
   };
   const exports: ExportPayload[] = [];
+  // What an upload sent, in order.
+  const uploads: { kind: "image" | "reading" | "pdf"; slug: string; body: unknown }[] = [];
+  const remote = new Map<string, Record<string, unknown>>();
   // The fixture was made in accurate mode.
   let markerMode: string = "accurate";
   const runs: string[] = [];
-  Object.assign(window, { __exports: exports, __markerRuns: runs, __saved: saved });
+  Object.assign(window, { __exports: exports, __uploads: uploads, __markerRuns: runs, __saved: saved });
   const fetchText = async (url: string) => {
     const r = await fetch(url);
     if (!r.ok) throw new Error(`${url}: ${r.status}`);
@@ -146,6 +176,17 @@ function mockApi(): Api {
       exports.push(e);
       return `/mock/readings/${e.slug}`;
     },
+    uploadImage: async (slug, name, mime) => {
+      uploads.push({ kind: "image", slug, body: { name, mime } });
+      return `https://files.typo.school/readings/${slug}/${name}`;
+    },
+    uploadReading: async (slug, reading) => {
+      uploads.push({ kind: "reading", slug, body: reading });
+      const created = !remote.has(slug);
+      remote.set(slug, { ...remote.get(slug), ...reading });
+      return { created, reading: { id: 1, slug, title: String(remote.get(slug)!.title), active: false } };
+    },
+    uploadPdf: async (project, slug) => void uploads.push({ kind: "pdf", slug, body: { project } }),
   };
 }
 

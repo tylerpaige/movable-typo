@@ -41,6 +41,7 @@ import { linkTarget, normalizeHref, placeLinks, setLink, withLinks } from "./edi
 import { schema } from "./editor/schema";
 import { images, slugify, toHtml } from "./export/toHtml";
 import { toMarkdown } from "./export/toMarkdown";
+import { uploadReading } from "./export/upload";
 import { displayKey, index, keyName, type Cmd } from "./keymap";
 import { pdfLinks } from "./pdf/links";
 import { PdfViewer } from "./pdf/viewer";
@@ -505,13 +506,20 @@ export class Workspace {
     return true;
   }
 
-  async exportReading() {
-    if (!this.project.meta.title && !(await this.editMeta())) return;
-    const { doc } = this.view.state;
-    const problems = footnoteIssues(doc);
-    if (problems.length && !(await confirm(`${problems.length} footnote ${problems.length === 1 ? "issue" : "issues"} still to check (${displayKey("Mod-Shift-k")}). Export anyway?`, "Export"))) {
-      return this.view.focus();
+  /** Asks for a title if there's none, and confirms going ahead with footnotes still to check. */
+  private async readyToPublish(verb: string) {
+    if (!this.project.meta.title && !(await this.editMeta())) return false;
+    const problems = footnoteIssues(this.view.state.doc);
+    if (problems.length && !(await confirm(`${problems.length} footnote ${problems.length === 1 ? "issue" : "issues"} still to check (${displayKey("Mod-Shift-k")}). ${verb} anyway?`, verb))) {
+      this.view.focus();
+      return false;
     }
+    return true;
+  }
+
+  async exportReading() {
+    if (!(await this.readyToPublish("Export"))) return;
+    const { doc } = this.view.state;
     const slug = slugify(this.project.meta.title);
     const conflicts = await this.host.api.exportConflicts(slug);
     if (conflicts.length && !(await confirm(`This will overwrite:\n${conflicts.join("\n")}`, "Overwrite"))) return this.view.focus();
@@ -525,6 +533,33 @@ export class Workspace {
       this.notify(`Exported to ${dir}`);
     } catch (e) {
       await alertBox("Export failed", String(e));
+    }
+    this.view.focus();
+  }
+
+  async uploadReading() {
+    if (!(await this.host.api.getSettings()).economy_api_key) {
+      await alertBox("Uploading needs an API key", "Add Typo School's API key (READINGS_API_KEY on Economy) in Settings.");
+      return this.host.editSettings();
+    }
+    if (!(await this.readyToPublish("Upload"))) return;
+    const { meta } = this.project;
+    const slug = slugify(meta.title);
+    const ok = await confirm(
+      `Upload “${meta.title}” to Typo School as ${slug}? A new reading starts unpublished. If ${slug} is already there, its text, its PDF and the details filled in here are replaced.`,
+      "Upload",
+    );
+    if (!ok) return this.view.focus();
+    try {
+      const res = await uploadReading(this.host.api, this.slug, this.view.state.doc, meta, (m) => this.notify(m));
+      const figures = res.images ? ` with ${res.images} ${res.images === 1 ? "image" : "images"}` : "";
+      this.notify(
+        res.created
+          ? `Uploaded ${slug}${figures} to Typo School, unpublished. Publish it in Economy.`
+          : `Updated ${slug}${figures} on Typo School (${res.reading.active ? "published" : "unpublished"})`,
+      );
+    } catch (e) {
+      await alertBox("Upload failed", String(e));
     }
     this.view.focus();
   }
@@ -664,6 +699,7 @@ export class Workspace {
 
       { id: "meta", label: "Reading details (title, author, year…)", group: file, keys: ["Mod-e"], run: () => this.editMeta() },
       { id: "export", label: "Export HTML and Markdown", group: file, keys: ["Mod-Shift-e"], run: () => this.exportReading() },
+      { id: "upload", label: "Upload to Typo School", group: file, keys: ["Mod-Shift-u"], run: () => this.uploadReading() },
       { id: "reimport", label: "Start over from Marker's output", group: file, run: () => this.startOver() },
       { id: "rerun", label: "Run Marker again (choose a mode) and start over", group: file, run: () => this.host.rerunMarker(this.slug) },
       { id: "home", label: "All readings", group: file, keys: ["Mod-Shift-o"], run: () => this.host.goHome() },

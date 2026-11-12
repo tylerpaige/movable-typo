@@ -22,7 +22,9 @@ export function slugify(s: string) {
 
 export interface ExportImage {
   name: string;
+  /** Base64. */
   data: string;
+  mime: string;
 }
 
 /** Walks the body and footnotes, calling back with grouped blocks; shared by both exporters. */
@@ -45,13 +47,35 @@ export function bodyBlocks(doc: PMNode) {
 export function images(doc: PMNode): ExportImage[] {
   const out: ExportImage[] = [];
   doc.descendants((n) => {
-    if (n.type === schema.nodes.figure && !n.attrs.excluded && n.attrs.image) out.push({ name: n.attrs.name, data: n.attrs.image });
+    if (n.type === schema.nodes.figure && !n.attrs.excluded && n.attrs.image) out.push({ name: n.attrs.name, data: n.attrs.image, mime: n.attrs.mime });
     return n.type !== schema.nodes.figure;
   });
   return out;
 }
 
+/** Where an exported figure's image is: beside the file, or (for an upload) wherever it was stored. */
+export type ImageSrc = (name: string) => string;
+const localImage: ImageSrc = (name) => `images/${name}`;
+
 export function toHtml(doc: PMNode, meta: Meta): string {
+  const head = [`\t<meta charset="UTF-8">`, `\t<title>${esc(meta.title || "Untitled")}</title>`];
+  if (meta.author) head.push(`\t<meta name="author" content="${esc(meta.author)}">`);
+  if (meta.year) head.push(`\t<meta name="date" content="${esc(meta.year)}">`);
+
+  return `<!doctype html>
+<html>
+<head>
+${head.join("\n")}
+</head>
+<body>
+${toArticle(doc, meta, localImage)}
+</body>
+</html>
+`;
+}
+
+/** The reading's `<article>`: what the file's <body> holds, and what Typo School keeps as body_html. */
+export function toArticle(doc: PMNode, meta: Meta, imageSrc: ImageSrc = localImage): string {
   const { num, order, notes } = numbering(doc);
   const refCount = new Map<string, number>();
 
@@ -86,7 +110,7 @@ export function toHtml(doc: PMNode, meta: Meta): string {
     if (n.type === schema.nodes.heading) return `${indent}<h${n.attrs.level}>${inline(n)}</h${n.attrs.level}>`;
     if (n.type === schema.nodes.figure) {
       const cap = n.content.size ? `\n${indent}\t<figcaption>${inline(n)}</figcaption>` : "";
-      return `${indent}<figure>\n${indent}\t<img src="images/${esc(n.attrs.name)}" alt="" />${cap}\n${indent}</figure>`;
+      return `${indent}<figure>\n${indent}\t<img src="${esc(imageSrc(n.attrs.name))}" alt="" />${cap}\n${indent}</figure>`;
     }
     if (n.type === schema.nodes.raw) return indent + n.attrs.html.trim();
     return `${indent}<p>${inline(n)}</p>`;
@@ -111,10 +135,6 @@ export function toHtml(doc: PMNode, meta: Meta): string {
     return `${t}\t\t<li id="fn${n}">${body}</li>`;
   });
 
-  const head = [`\t<meta charset="UTF-8">`, `\t<title>${esc(meta.title || "Untitled")}</title>`];
-  if (meta.author) head.push(`\t<meta name="author" content="${esc(meta.author)}">`);
-  if (meta.year) head.push(`\t<meta name="date" content="${esc(meta.year)}">`);
-
   const header = [`${t}<h1>${esc(meta.title || "Untitled")}</h1>`];
   if (meta.author) header.push(`${t}<p>${esc(meta.author)}</p>`);
   const pub = [meta.source, meta.year && (meta.source ? `(${meta.year})` : meta.year)].filter(Boolean).join(" ");
@@ -125,13 +145,7 @@ export function toHtml(doc: PMNode, meta: Meta): string {
     ? `\n\n${t}<section class="footnotes">\n${t}\t<h2>Notes</h2>\n${t}\t<ol>\n${noteItems.join("\n")}\n${t}\t</ol>\n${t}</section>`
     : "";
 
-  return `<!doctype html>
-<html>
-<head>
-${head.join("\n")}
-</head>
-<body>
-	<article>
+  return `	<article>
 		<header>
 ${header.map((h) => "\t" + h).join("\n")}
 		</header>
@@ -139,10 +153,7 @@ ${header.map((h) => "\t" + h).join("\n")}
 		<hr />
 
 ${parts.join("\n\n")}${footnotes}
-	</article>
-</body>
-</html>
-`;
+	</article>`;
 }
 
 /** `<em>a</em><em> b</em>` → `<em>a b</em>`, which appears when marks and refs interleave. */
